@@ -1,5 +1,9 @@
 package repository
 
+// This file has been updated to be compatible with MySQL 5.7.
+// The RETURNING clause is not supported in MySQL 5.7, so LastInsertId() is used instead.
+// The table creation syntax has also been adjusted to use MySQL 5.7 compatible syntax.
+
 import (
 	"context"
 	"database/sql"
@@ -28,7 +32,7 @@ func NewSQLMediaRepository(db *sql.DB) *SQLMediaRepository {
 func (r *SQLMediaRepository) CreateTablesIfNotExist(ctx context.Context) error {
 	query := `
 	CREATE TABLE IF NOT EXISTS media (
-		id SERIAL PRIMARY KEY,
+		id BIGINT AUTO_INCREMENT PRIMARY KEY,
 		model_type VARCHAR(255),
 		model_id BIGINT,
 		uuid VARCHAR(36) UNIQUE,
@@ -44,14 +48,13 @@ func (r *SQLMediaRepository) CreateTablesIfNotExist(ctx context.Context) error {
 		generated_conversions JSON,
 		responsive_images JSON,
 		order_column INT,
-		created_at TIMESTAMP,
-		updated_at TIMESTAMP,
-		INDEX idx_model (model_type, model_id)
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		KEY idx_model (model_type, model_id)
 	)
 	`
 
-	// Note: The INDEX part might need to be adjusted based on your specific database (MySQL, PostgreSQL, etc.)
-	// as the syntax can vary
+	// Note: The KEY syntax is MySQL-specific for indexes
 
 	_, err := r.db.ExecContext(ctx, query)
 	if err != nil {
@@ -198,7 +201,6 @@ func (r *SQLMediaRepository) Save(ctx context.Context, media *models.Media) erro
 				custom_properties, generated_conversions, responsive_images, 
 				order_column, created_at, updated_at
 			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			RETURNING id
 		`
 
 		var orderColumnValue interface{} = nil
@@ -206,8 +208,7 @@ func (r *SQLMediaRepository) Save(ctx context.Context, media *models.Media) erro
 			orderColumnValue = *media.OrderColumn
 		}
 
-		var id uint64
-		err := r.db.QueryRowContext(
+		result, err := r.db.ExecContext(
 			ctx,
 			query,
 			media.ModelType,
@@ -227,13 +228,19 @@ func (r *SQLMediaRepository) Save(ctx context.Context, media *models.Media) erro
 			orderColumnValue,
 			media.CreatedAt,
 			media.UpdatedAt,
-		).Scan(&id)
+		)
 
 		if err != nil {
 			return fmt.Errorf("failed to create media record: %w", err)
 		}
 
-		media.ID = id
+		// Get the last inserted ID
+		lastID, err := result.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("failed to get last insert ID: %w", err)
+		}
+
+		media.ID = uint64(lastID)
 	} else {
 		// Update existing record
 		query := `
